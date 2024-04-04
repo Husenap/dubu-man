@@ -6,7 +6,7 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
-#include "stb_image_write.h"
+#include "thirdparty/stb_image_write.h"
 
 #include "float3_extension.cuh"
 #include "settings.cuh"
