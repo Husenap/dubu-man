@@ -4,4 +4,5 @@
 
 ### Screenshots
 
-Here will be screenshots 😈
+Rendering normals on a sphere
+![](screenshots/normals.png)
