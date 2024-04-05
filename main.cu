@@ -1,94 +1,146 @@
 #include <iostream>
-#include <format>
 #include <vector>
 #include <algorithm>
-#include <chrono>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include "thirdparty/stb_image_write.h"
 
-#include "float3_extension.cuh"
+#include "util.cuh"
+#include "vec3.cuh"
 #include "settings.cuh"
 #include "camera.cuh"
+#include "cuda_timer.cuh"
+#include "hittable.cuh"
+
+#include <curand_kernel.h>
 
 namespace dubu_man {
-    __device__ component hit_sphere(point3 const &center, component radius, ray const &r) {
-        const auto oc = r.origin() - center;
-        const auto a = length_squared(r.direction());
-        const auto half_b = dot(oc, r.direction());
-        const auto c = length_squared(oc) - radius * radius;
-        const auto discriminant = half_b * half_b - a * c;
-
-        if (discriminant < 0) return -1.0;
-
-        return (-half_b - sqrt(discriminant)) / a;
+    __device__ float linear_to_gamma(float linear_component) {
+        return pow(linear_component, 1.0f/2.2f);
     }
 
-    __device__ color ray_color(ray const &r) {
-        constexpr auto sphere_center = point3{0, 0, -1};
-        const auto t = hit_sphere(sphere_center, 0.5, r);
-        if (t > 0) {
-            const auto normal = normalize(r.at(t) - sphere_center);
-            return normal * 0.5 + vec3{0.5, 0.5, 0.5};
-        };
+    __device__ color ray_color(ray const &r, hittable *world, curandState &rand_state) {
+        ray cur_ray = r;
+        float cur_attenuation = 1.0f;
 
-        const auto unit_direction = normalize(r.direction());
-        const auto a = component(0.5) * (unit_direction.y + 1.0);
-        return component(1.0 - a) * color{1.0, 1.0, 1.0} + component(a) * color{0.5, 0.7, 1.0};
+        for (size_t b = 0; b < MAX_BOUNCES; ++b) {
+            hit_record rec;
+            if (world->hit(cur_ray, 0.001f, INFINITY, rec)) {
+                vec3 direction = rec.normal + vec3::random_unit_vector(rand_state);
+                cur_attenuation *= 0.5f;
+                cur_ray = ray(rec.p, direction);
+            } else {
+                const auto unit_direction = normalize(cur_ray.direction());
+                const auto a = 0.5f * (unit_direction.y + 1.0f);
+                color c = (1.0f - a) * color{1.0f, 1.0f, 1.0f} + a * color{0.5f, 0.7f, 1.0f};
+                return cur_attenuation * c;
+            }
+        }
+        return vec3{0};
     }
 
-    __global__ void draw_pixel(vec3 output[IMAGE_WIDTH * IMAGE_HEIGHT], camera const cam) {
+    __global__ void render_init(curandState *rand_state) {
         size_t i = blockIdx.x * blockDim.x + threadIdx.x;
         size_t j = blockIdx.y * blockDim.y + threadIdx.y;
-
         if (i >= IMAGE_WIDTH || j >= IMAGE_HEIGHT) return;
+        const auto pixel_index = j * IMAGE_WIDTH + i;
 
-        const auto r = cam.get_ray(i, j);
-        output[j * IMAGE_WIDTH + i] = ray_color(r);
+        curand_init(1984, pixel_index, 0, &rand_state[pixel_index]);
+    }
+
+    __global__ void render(vec3 framebuffer[], camera const cam, hittable **world, curandState *rand_state) {
+        size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t j = blockIdx.y * blockDim.y + threadIdx.y;
+        if (i >= IMAGE_WIDTH || j >= IMAGE_HEIGHT) return;
+        const auto pixel_index = j * IMAGE_WIDTH + i;
+
+        auto local_rand_state = rand_state[pixel_index];
+        color col{0};
+        for (size_t s = 0; s < SAMPLES_PER_PIXEL; ++s) {
+            const auto r = cam.get_ray(i, j, local_rand_state);
+            col = col + ray_color(r, *world, local_rand_state);
+        }
+        rand_state[pixel_index] = local_rand_state;
+        col = col / float(SAMPLES_PER_PIXEL);
+        col.x = linear_to_gamma(col.x);
+        col.y = linear_to_gamma(col.y);
+        col.z = linear_to_gamma(col.z);
+        framebuffer[pixel_index] = col;
+    }
+
+    __global__ void create_world(hittable **d_world) {
+        auto **const list = new hittable *[2];
+        list[0] = new sphere({0, 0, -1}, 0.5f);
+        list[1] = new sphere({0, -100.5f, -1}, 100);
+        *d_world = new hittable_list(list, 2);
+    }
+
+    __global__ void free_world(hittable **d_world) {
+        delete *d_world;
     }
 
     void run() {
-        auto pixels = std::vector<vec3>(IMAGE_WIDTH * IMAGE_HEIGHT, {0, 0, 0});
+        // Allocate framebuffer to render to
+        vec3 *framebuffer;
+        cudaCheck(cudaMallocManaged(&framebuffer, sizeof(vec3) * NUM_PIXELS));
 
-        vec3 *d_pixels;
-        cudaMalloc(&d_pixels, sizeof(pixels[0]) * pixels.size());
+        // Allocate random state
+        curandState *d_rand_state;
+        cudaCheck(cudaMalloc(&d_rand_state, NUM_PIXELS * sizeof(curandState)));
 
+        // Create camera
         const camera cam{vec3{0, 0, 0}};
 
-        const auto threads_per_block = dim3(32, 32, 1);
-        const auto num_blocks = dim3(
-                ceil(IMAGE_WIDTH / static_cast<float>(threads_per_block.x)),
-                ceil(IMAGE_HEIGHT / static_cast<float>(threads_per_block.y)),
-                1
-        );
-        std::clog << "Rendering..." << std::endl;
-        const auto t0 = std::chrono::high_resolution_clock::now();
-        draw_pixel<<<num_blocks, threads_per_block>>>(d_pixels, cam);
-        const auto t1 = std::chrono::high_resolution_clock::now();
-        std::clog << std::format("Done: {}ms",
-                                 static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                         t1 - t0).count()) / 1000.0)
-                  << std::endl;
+        // Allocate world
+        hittable **d_world;
+        cudaCheck(cudaMalloc(&d_world, sizeof(hittable *)));
+        create_world<<<1, 1>>>(d_world);
 
-        cudaMemcpy(pixels.data(), d_pixels, sizeof(pixels[0]) * pixels.size(), cudaMemcpyDeviceToHost);
+        { // Render
+            const auto block_dim = dim3(8, 8, 1);
+            const auto grid_dim = dim3(ceil(IMAGE_WIDTH / static_cast<float>(block_dim.x)),
+                                       ceil(IMAGE_HEIGHT / static_cast<float>(block_dim.y)),
+                                       1);
+            {
+                cuda_timer timer("Render Init");
+                render_init<<<grid_dim, block_dim>>>(d_rand_state);
+                cudaCheck(cudaGetLastError());
+                cudaCheck(cudaDeviceSynchronize());
+            }
+            {
+                cuda_timer timer("Render");
+                render<<<grid_dim, block_dim>>>(framebuffer, cam, d_world, d_rand_state);
+                cudaCheck(cudaGetLastError());
+                cudaCheck(cudaDeviceSynchronize());
+            }
+        }
 
-        {
-            auto data = std::vector<uchar3>(pixels.size(), {0, 0, 0});
+
+        { // Save framebuffer to file
+            auto data = std::vector<uchar3>(NUM_PIXELS, {0, 0, 0});
             for (size_t i = 0; i < data.size(); ++i) {
-                data[i] = {
-                        static_cast<unsigned char>(std::clamp(pixels[i].x, component(0.0), component(1.0)) * 255.999),
-                        static_cast<unsigned char>(std::clamp(pixels[i].y, component(0.0), component(1.0)) * 255.999),
-                        static_cast<unsigned char>(std::clamp(pixels[i].z, component(0.0), component(1.0)) * 255.999)};
+                data[i] = {static_cast<unsigned char>(std::clamp(framebuffer[i].x, 0.0f, 0.999f) * 256),
+                           static_cast<unsigned char>(std::clamp(framebuffer[i].y, 0.0f, 0.999f) * 256),
+                           static_cast<unsigned char>(std::clamp(framebuffer[i].z, 0.0f, 0.999f) * 256)};
             }
 
-            stbi_write_png("normals.png",
+            stbi_write_png("image.png",
                            IMAGE_WIDTH,
                            IMAGE_HEIGHT,
                            3,
                            data.data(),
                            IMAGE_WIDTH * sizeof(data[0]));
+
         }
+
+        // Deallocate
+        cudaCheck(cudaDeviceSynchronize());
+        free_world<<<1, 1>>>(d_world);
+        cudaCheck(cudaGetLastError());
+        cudaCheck(cudaFree(d_world));
+        cudaCheck(cudaFree(d_rand_state));
+        cudaCheck(cudaFree(framebuffer));
     }
 }
 

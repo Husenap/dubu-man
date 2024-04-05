@@ -1,19 +1,19 @@
 #pragma once
 
-#include "float3_extension.cuh"
+#include "vec3.cuh"
 
 namespace dubu_man {
     class ray {
     public:
-        ray() = default;
+        __device__ ray() {};
 
-        __device__ ray(point3 const origin, vec3 const direction) : m_origin(origin), m_direction(direction) {}
+        __device__ ray(point3 const &origin, vec3 const &direction) : m_origin(origin), m_direction(direction) {}
 
-        __device__  point3 origin() const { return m_origin; }
+        __device__   point3 const &origin() const { return m_origin; }
 
-        __device__  vec3 direction() const { return m_direction; }
+        __device__  vec3 const &direction() const { return m_direction; }
 
-        __device__ point3 at(component t) const {
+        __device__ point3 at(float t) const {
             return m_origin + t * m_direction;
         }
 
