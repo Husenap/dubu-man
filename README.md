@@ -6,3 +6,6 @@
 
 Rendering normals on a sphere
 ![](screenshots/normals.png)
+
+Lambertian shading 
+![](screenshots/lambertian.png)
