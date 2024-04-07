@@ -233,7 +233,7 @@ namespace dubu_man {
                 {"image_normal.png", normal_framebuffer.data(),},
                 {"image_albedo.png", albedo_framebuffer.data(),},
 #ifdef USE_OIDN
-                {"denoised.png", (vec3 *) color_buffer.getData(),},
+                {"image_oidn_denoised.png", (vec3 *) color_buffer.getData(),},
                 {"image_oidn_normal.png", (vec3 *) normal_buffer.getData(),},
                 {"image_oidn_albedo.png", (vec3 *) albedo_buffer.getData(),},
 #endif
