@@ -17,7 +17,14 @@ namespace dubu_man {
         m_pixel00_loc = viewport_upper_left + 0.5 * (m_pixel_delta_u + m_pixel_delta_v);
     }
 
-    __device__ ray camera::get_ray(size_t i, size_t j, curandState &rand_state) const {
+    __device__ ray camera::get_ray(size_t i, size_t j) const {
+        const auto pixel_center = m_pixel00_loc
+                                  + static_cast<float>(i) * m_pixel_delta_u
+                                  + static_cast<float>(j) * m_pixel_delta_v;
+        const auto ray_direction = pixel_center - m_center;
+        return {m_center, ray_direction};
+    }
+    __device__ ray camera::get_sub_pixel_ray(size_t i, size_t j, curandState &rand_state) const {
         const auto pixel_center = m_pixel00_loc
                                   + static_cast<float>(i) * m_pixel_delta_u
                                   + static_cast<float>(j) * m_pixel_delta_v

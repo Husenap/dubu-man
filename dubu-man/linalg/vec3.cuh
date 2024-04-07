@@ -8,7 +8,7 @@
 struct vec3 {
     constexpr __host__ __device__ vec3() {}
 
-    constexpr __host__ __device__ vec3(float s) : x(s), y(s), z(s) {}
+    constexpr __host__ __device__ explicit vec3(float s) : x(s), y(s), z(s) {}
 
     constexpr __host__ __device__ vec3(float x, float y, float z) : x(x), y(y), z(z) {}
 
@@ -50,6 +50,9 @@ static __device__ __host__ vec3 operator*(vec3 const &v, float const s) {
     return {v.x * s, v.y * s, v.z * s};
 }
 
+static __device__ __host__ vec3 operator*(vec3 const& a, vec3 const &b) {
+    return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
 static __device__ __host__ vec3 operator*(float const s, vec3 const &v) {
     return {v.x * s, v.y * s, v.z * s};
 }
@@ -112,4 +115,13 @@ inline __device__ vec3 vec3::random_on_hemisphere(vec3 const &normal, curandStat
     } else {
         return -on_unit_sphere;
     }
+}
+
+static __device__ __host__ bool near_zero(vec3 const &v) {
+    constexpr auto eps = 1e-8f;
+    return (fabs(v.x) < eps) && (fabs(v.y) < eps) && (fabs(v.z) < eps);
+}
+
+static __device__ __host__ vec3 reflect(vec3 const &i, vec3 const &n) {
+    return i - 2.0f * n * dot(i, n);
 }
