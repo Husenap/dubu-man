@@ -27,6 +27,15 @@
 #include "material/material.cuh"
 
 namespace dubu_man {
+    __global__ void render_init(curandState *rand_state) {
+        size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t j = blockIdx.y * blockDim.y + threadIdx.y;
+        if (i >= IMAGE_WIDTH || j >= IMAGE_HEIGHT) return;
+        const auto pixel_index = j * IMAGE_WIDTH + i;
+
+        curand_init(1984, pixel_index, 0, &rand_state[pixel_index]);
+    }
+
     __host__ __device__ float linear_to_srgb(float value) {
         return value < 0.0031308f ? 12.92f * value : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
     }
@@ -39,9 +48,9 @@ namespace dubu_man {
         ray cur_ray = r;
         color cur_attenuation = color{1};
 
-        for (size_t b = 0; b < MAX_BOUNCES; ++b) {
+        for (size_t b = 0; b <= MAX_BOUNCES; ++b) {
             hit_record rec;
-            if (world->hit(cur_ray, 0.001f, INFINITY, rec)) {
+            if (world->hit(cur_ray, interval{0.001f, INFINITY}, rec)) {
                 color attenuation;
                 if (!rec.material->scatter(cur_ray, rec, attenuation, cur_ray, rand_state))
                     return color{0};
@@ -56,46 +65,46 @@ namespace dubu_man {
         return color{0};
     }
 
-    __global__ void render_init(curandState *rand_state) {
-        size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t j = blockIdx.y * blockDim.y + threadIdx.y;
-        if (i >= IMAGE_WIDTH || j >= IMAGE_HEIGHT) return;
-        const auto pixel_index = j * IMAGE_WIDTH + i;
-
-        curand_init(1984, pixel_index, 0, &rand_state[pixel_index]);
-    }
-
     __global__ void
-    render(vec3 color_framebuffer[], vec3 albedo_framebuffer[], vec3 normal_framebuffer[], camera const cam,
+    render(vec3 color_framebuffer[], vec3 albedo_framebuffer[], vec3 normal_framebuffer[], size_t framebuffer_pitch,
+           camera const cam,
            hittable **world, curandState *rand_state) {
-        size_t i = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t j = blockIdx.y * blockDim.y + threadIdx.y;
-        if (i >= IMAGE_WIDTH || j >= IMAGE_HEIGHT) return;
-        const auto pixel_index = j * IMAGE_WIDTH + i;
+        for (unsigned int py = blockIdx.y * blockDim.y + threadIdx.y; py < IMAGE_HEIGHT; py += blockDim.y * gridDim.y) {
+            vec3 *color_row = (vec3 *) ((char *) color_framebuffer + framebuffer_pitch * py);
+            vec3 *albedo_row = (vec3 *) ((char *) albedo_framebuffer + framebuffer_pitch * py);
+            vec3 *normal_row = (vec3 *) ((char *) normal_framebuffer + framebuffer_pitch * py);
+            for (unsigned int px = blockIdx.x * blockDim.x + threadIdx.x;
+                 px < IMAGE_WIDTH; px += blockDim.x * gridDim.x) {
+                const auto pixel_index = py * IMAGE_WIDTH + px;
+                auto local_rand_state = rand_state[pixel_index];
 
-        auto &local_rand_state = rand_state[pixel_index];
-        color col{};
-        color albedo{};
-        color normal{};
+                color col{};
+                color albedo{};
+                color normal{};
 
-        for (size_t s = 0; s < SAMPLES_PER_PIXEL; ++s) {
-            const auto r = cam.get_sub_pixel_ray(i, j, local_rand_state);
-            col = col + ray_color(r, *world, local_rand_state);
+                for (size_t s = 0; s < SAMPLES_PER_PIXEL; ++s) {
+                    const auto r = cam.get_sub_pixel_ray(px, py, local_rand_state);
+                    col = col + ray_color(r, *world, local_rand_state);
 
-            hit_record rec;
-            if ((*world)->hit(r, 0.001f, INFINITY, rec)) {
-                normal = normal + rec.normal;
-                albedo = albedo + rec.material->get_albedo(rec);
+                    hit_record rec;
+                    if ((*world)->hit(r, interval{0.001f, INFINITY}, rec)) {
+                        normal = normal + rec.normal;
+                        albedo = albedo + rec.material->get_albedo(rec);
+                    }
+                }
+
+                rand_state[pixel_index] = local_rand_state;
+
+                col = col / float(SAMPLES_PER_PIXEL);
+                col.x = linear_to_srgb(col.x);
+                col.y = linear_to_srgb(col.y);
+                col.z = linear_to_srgb(col.z);
+
+                color_row[px] = col;
+                albedo_row[px] = albedo / float(SAMPLES_PER_PIXEL);
+                normal_row[px] = normalize(normal);
             }
         }
-        col = col / float(SAMPLES_PER_PIXEL);
-        col.x = linear_to_srgb(col.x);
-        col.y = linear_to_srgb(col.y);
-        col.z = linear_to_srgb(col.z);
-
-        color_framebuffer[pixel_index] = col;
-        albedo_framebuffer[pixel_index] = albedo / float(SAMPLES_PER_PIXEL);
-        normal_framebuffer[pixel_index] = normalize(normal);
     }
 
     __global__ void create_world(hittable **d_world) {
@@ -113,6 +122,11 @@ namespace dubu_man {
     }
 
     void run() {
+        int device_id;
+        cudaCheck(cudaGetDevice(&device_id));
+        int sm_count;
+        cudaCheck(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device_id));
+
         // Allocate framebuffers to render to
         auto color_framebuffer = std::vector<vec3>(NUM_PIXELS);
         auto albedo_framebuffer = std::vector<vec3>(NUM_PIXELS);
@@ -131,37 +145,46 @@ namespace dubu_man {
         create_world<<<1, 1>>>(d_world);
 
         { // Render
+            size_t framebuffer_pitch;
             vec3 *d_color_framebuffer;
-            cudaCheck(cudaMalloc(&d_color_framebuffer, sizeof(vec3) * NUM_PIXELS));
+            cudaCheck(cudaMallocPitch(&d_color_framebuffer, &framebuffer_pitch, sizeof(vec3) * IMAGE_WIDTH,
+                                      IMAGE_HEIGHT));
             vec3 *d_albedo_framebuffer;
-            cudaCheck(cudaMalloc(&d_albedo_framebuffer, sizeof(vec3) * NUM_PIXELS));
+            cudaCheck(cudaMallocPitch(&d_albedo_framebuffer, &framebuffer_pitch, sizeof(vec3) * IMAGE_WIDTH,
+                                      IMAGE_HEIGHT));
             vec3 *d_normal_framebuffer;
-            cudaCheck(cudaMalloc(&d_normal_framebuffer, sizeof(vec3) * NUM_PIXELS));
+            cudaCheck(cudaMallocPitch(&d_normal_framebuffer, &framebuffer_pitch, sizeof(vec3) * IMAGE_WIDTH,
+                                      IMAGE_HEIGHT));
 
-            const auto block_dim = dim3(16, 16, 1);
-            const auto grid_dim = dim3(ceil(IMAGE_WIDTH / static_cast<float>(block_dim.x)),
-                                       ceil(IMAGE_HEIGHT / static_cast<float>(block_dim.y)),
-                                       1);
             {
+                const auto dim_block = dim3(32, 32, 1);
+                const auto dim_grid = dim3(ceil(IMAGE_WIDTH / static_cast<float>(dim_block.x)),
+                                           ceil(IMAGE_HEIGHT / static_cast<float>(dim_block.y)),
+                                           1);
                 timer t("Render Init");
-                render_init<<<grid_dim, block_dim>>>(d_rand_state);
+                render_init<<<dim_grid, dim_block>>>(d_rand_state);
                 cudaCheck(cudaGetLastError());
                 cudaCheck(cudaDeviceSynchronize());
             }
             {
+                const auto dim_block = dim3(16, 16, 1);
                 timer t("Render");
-                render<<<grid_dim, block_dim>>>(d_color_framebuffer, d_albedo_framebuffer, d_normal_framebuffer, cam,
-                                                d_world, d_rand_state);
+                render<<<sm_count, dim_block>>>(d_color_framebuffer,
+                                                                   d_albedo_framebuffer,
+                                                                   d_normal_framebuffer,
+                                                                   framebuffer_pitch,
+                                                                   cam,
+                                                                   d_world, d_rand_state);
                 cudaCheck(cudaGetLastError());
                 cudaCheck(cudaDeviceSynchronize());
             }
 
-            cudaCheck(cudaMemcpy(color_framebuffer.data(), d_color_framebuffer, sizeof(vec3) * NUM_PIXELS,
-                                 cudaMemcpyDeviceToHost));
-            cudaCheck(cudaMemcpy(albedo_framebuffer.data(), d_albedo_framebuffer, sizeof(vec3) * NUM_PIXELS,
-                                 cudaMemcpyDeviceToHost));
-            cudaCheck(cudaMemcpy(normal_framebuffer.data(), d_normal_framebuffer, sizeof(vec3) * NUM_PIXELS,
-                                 cudaMemcpyDeviceToHost));
+            cudaMemcpy2D(color_framebuffer.data(), sizeof(vec3) * IMAGE_WIDTH, d_color_framebuffer, framebuffer_pitch,
+                         sizeof(vec3) * IMAGE_WIDTH, IMAGE_HEIGHT, cudaMemcpyDeviceToHost);
+            cudaMemcpy2D(albedo_framebuffer.data(), sizeof(vec3) * IMAGE_WIDTH, d_albedo_framebuffer, framebuffer_pitch,
+                         sizeof(vec3) * IMAGE_WIDTH, IMAGE_HEIGHT, cudaMemcpyDeviceToHost);
+            cudaMemcpy2D(normal_framebuffer.data(), sizeof(vec3) * IMAGE_WIDTH, d_normal_framebuffer, framebuffer_pitch,
+                         sizeof(vec3) * IMAGE_WIDTH, IMAGE_HEIGHT, cudaMemcpyDeviceToHost);
             cudaCheck(cudaDeviceSynchronize());
 
             cudaCheck(cudaFree(d_color_framebuffer));
