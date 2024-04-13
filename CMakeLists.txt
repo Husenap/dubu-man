@@ -17,6 +17,7 @@ add_executable(dubu_man
         dubu-man/hittable/sphere.cuh
         dubu-man/hittable/hittable_list.cuh
         dubu-man/material/material.cuh
+        dubu-man/linalg/interval.cuh
 )
 
 set_target_properties(dubu_man PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

@@ -6,8 +6,8 @@ namespace dubu_man {
 
     class sphere : public hittable {
         point3 m_center;
-        float m_radius;
-        material *m_material;
+        float m_radius{};
+        material *m_material{};
     public:
         __device__ sphere() {}
 
@@ -17,23 +17,25 @@ namespace dubu_man {
         }
 
         __device__ sphere(point3 center, float radius, material *material) : m_center(center), m_radius(radius),
-                                                                             m_material(material) {}
+                                                                             m_material(material) {
+            assert(m_radius >= 0);
+        }
 
-        __device__ bool hit(ray const &r, float ray_tmin, float ray_tmax, hit_record &rec) const override {
-            const auto oc = r.origin() - m_center;
+        __device__ bool hit(ray const &r, interval ray_t, hit_record &rec) const override {
+            const auto oc = m_center - r.origin();
             const auto a = length_squared(r.direction());
-            const auto half_b = dot(oc, r.direction());
+            const auto h = dot(oc, r.direction());
             const auto c = length_squared(oc) - m_radius * m_radius;
-            const auto discriminant = half_b * half_b - a * c;
 
+            const auto discriminant = h * h - a * c;
             if (discriminant < 0) return false;
 
             const auto sqrtd = sqrt(discriminant);
 
-            auto root = (-half_b - sqrtd) / a;
-            if (root <= ray_tmin || ray_tmax <= root) {
-                root = (-half_b + sqrtd) / a;
-                if (root <= ray_tmin || ray_tmax <= root) {
+            auto root = (h - sqrtd) / a;
+            if (!ray_t.surrounds(root)) {
+                root = (h + sqrtd) / a;
+                if (!ray_t.surrounds(root)) {
                     return false;
                 }
             }

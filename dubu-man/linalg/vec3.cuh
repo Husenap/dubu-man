@@ -6,13 +6,49 @@
 #include <curand_kernel.h>
 
 struct vec3 {
+    union {
+        struct {
+            float x, y, z;
+        };
+        float e[3]{0,0,0};
+    };
+
     constexpr __host__ __device__ vec3() {}
 
     constexpr __host__ __device__ explicit vec3(float s) : x(s), y(s), z(s) {}
 
     constexpr __host__ __device__ vec3(float x, float y, float z) : x(x), y(y), z(z) {}
 
-    float x{}, y{}, z{};
+    constexpr __host__ __device__ float operator[](int i) const { return e[i]; }
+
+    constexpr __host__ __device__ float &operator[](int i) { return e[i]; }
+
+    constexpr __host__ __device__ vec3 operator-() const { return {-x, -y, -z}; }
+
+    __host__ __device__ vec3 &operator+=(const vec3 &v) {
+        x += v.x;
+        y += v.y;
+        z += v.z;
+        return *this;
+    }
+
+    __host__ __device__ vec3 &operator*=(const vec3& v) {
+        x *= v.x;
+        y *= v.y;
+        z *= v.z;
+        return *this;
+    }
+
+    __host__ __device__ vec3 &operator*=(const float s) {
+        x *= s;
+        y *= s;
+        z *= s;
+        return *this;
+    }
+
+    __host__ __device__ vec3 &operator/=(const float s) {
+        return *this *= 1 / s;
+    }
 
     __device__ static vec3 random(curandState &rand_state) {
         return {curand_uniform(&rand_state), curand_uniform(&rand_state), curand_uniform(&rand_state)};
@@ -42,17 +78,14 @@ static __device__ __host__ vec3 operator-(vec3 const &a, vec3 const &b) {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-static __device__ __host__ vec3 operator-(vec3 const &a) {
-    return {-a.x, -a.y, -a.z};
-}
-
 static __device__ __host__ vec3 operator*(vec3 const &v, float const s) {
     return {v.x * s, v.y * s, v.z * s};
 }
 
-static __device__ __host__ vec3 operator*(vec3 const& a, vec3 const &b) {
+static __device__ __host__ vec3 operator*(vec3 const &a, vec3 const &b) {
     return {a.x * b.x, a.y * b.y, a.z * b.z};
 }
+
 static __device__ __host__ vec3 operator*(float const s, vec3 const &v) {
     return {v.x * s, v.y * s, v.z * s};
 }
@@ -61,23 +94,12 @@ static __device__ __host__ vec3 operator/(vec3 const &v, float const s) {
     return v * (1 / s);
 }
 
-static __device__ __host__ void operator/=(vec3 &v, float const s) {
-    v.x /= s;
-    v.y /= s;
-    v.z /= s;
-}
-
 static __device__ __host__ vec3 cross(vec3 const &a, vec3 const &b) {
-    return {a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x
-    };
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
 static __device__ __host__ float dot(vec3 const &a, vec3 const &b) {
-    return a.x * b.x
-           + a.y * b.y
-           + a.z * b.z;
+    return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 static __device__ __host__ float length_squared(vec3 const &v) {
@@ -124,4 +146,11 @@ static __device__ __host__ bool near_zero(vec3 const &v) {
 
 static __device__ __host__ vec3 reflect(vec3 const &i, vec3 const &n) {
     return i - 2.0f * n * dot(i, n);
+}
+
+static __device__ __host__ vec3 refract(vec3 const &uv, vec3 const &n, float etai_over_etat) {
+    const auto cos_theta = fmin(-dot(uv, n), 1.0f);
+    const vec3 r_out_perp = etai_over_etat * (uv + cos_theta * n);
+    const vec3 r_out_parallel = -sqrt(fabs(1.0f - length_squared(r_out_perp))) * n;
+    return r_out_perp + r_out_parallel;
 }
