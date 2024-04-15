@@ -3,7 +3,7 @@
 #include <format>
 #include <cuda.h>
 
-#define cudaCheck(ans) { cudaAssert((ans), __FILE__, __LINE__); }
+#define cudaCheck(ans) cudaAssert((ans), __FILE__, __LINE__)
 
 inline void cudaAssert(cudaError_t code, const char *file, int line) {
     if (code != cudaSuccess) {
