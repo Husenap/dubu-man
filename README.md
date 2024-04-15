@@ -25,8 +25,8 @@ Finally, pass CMake the option `-DUSE_OIDN`.
 
 ### Todo
 
-Look into [Introducing Low-Level GPU Virtual Memory Management](https://developer.nvidia.com/blog/introducing-low-level-gpu-virtual-memory-management/)
-for implementing resource pools for hittable objects and materials later on.
+- Implement resource pools for hittables, materials, etc., see [Introducing Low-Level GPU Virtual Memory Management](https://developer.nvidia.com/blog/introducing-low-level-gpu-virtual-memory-management/).
+- Use RT Cores, see [NVIDIA OptiX Ray Tracing Powered by RTX](https://developer.nvidia.com/blog/nvidia-optix-ray-tracing-powered-rtx/).
 
 ### Screenshots
 
@@ -42,3 +42,5 @@ Denoised using OpenImageDenoise
 The buffers used by OpenImageDenoise (Input, Output, Normal, Albedo)
 ![](screenshots/denoise_buffers.png)
 
+The final render of the first book, using OIDN for denoising.
+![](screenshots/in-one-weekend.png)
