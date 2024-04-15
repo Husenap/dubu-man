@@ -10,7 +10,7 @@ struct vec3 {
         struct {
             float x, y, z;
         };
-        float e[3]{0,0,0};
+        float e[3]{0, 0, 0};
     };
 
     constexpr __host__ __device__ vec3() {}
@@ -32,7 +32,7 @@ struct vec3 {
         return *this;
     }
 
-    __host__ __device__ vec3 &operator*=(const vec3& v) {
+    __host__ __device__ vec3 &operator*=(const vec3 &v) {
         x *= v.x;
         y *= v.y;
         z *= v.z;
@@ -59,6 +59,8 @@ struct vec3 {
                 min + (max - min) * curand_uniform(&rand_state),
                 min + (max - min) * curand_uniform(&rand_state)};
     }
+
+    __device__ static vec3 random_in_unit_disk(curandState &rand_state);
 
     __device__ static vec3 random_in_unit_sphere(curandState &rand_state);
 
@@ -116,6 +118,14 @@ static __device__ __host__ vec3 normalize(vec3 const &v) {
 
 static std::ostream &operator<<(std::ostream &out, vec3 const &v) {
     return out << std::format("({}, {}, {})", v.x, v.y, v.z);
+}
+
+inline __device__ vec3 vec3::random_in_unit_disk(curandState &rand_state) {
+    vec3 p{};
+    do {
+        p = vec3{curand_uniform(&rand_state) * 2.0f - 1.0f, curand_uniform(&rand_state) * 2.0f - 1.0f, 0.0f};
+    } while (length_squared(p) >= 1.0f);
+    return p;
 }
 
 inline __device__ vec3 vec3::random_in_unit_sphere(curandState &rand_state) {
