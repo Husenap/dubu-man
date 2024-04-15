@@ -21,7 +21,7 @@ Add the binary path to your environment `PATH`:`{OIDN_SDK}/bin)`.
 
 Create the environment variable `OIDN_CMAKE_DIR`:`{OIDN_SDK}/lib/cmake/OpenImageDenoise-<version>/)`.
 
-Finally, pass CMake the option `-DUSE_OIDN`.
+Finally, pass CMake the option `-DUSE_OIDN=ON`.
 
 ### Todo
 
