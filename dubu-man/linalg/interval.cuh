@@ -30,7 +30,4 @@ namespace dubu_man {
 
         static const interval empty, universe;
     };
-
-    constexpr interval interval::empty = interval{INFINITY, -INFINITY};
-    constexpr interval interval::universe = interval{-INFINITY, INFINITY};
 } // dubu_man
