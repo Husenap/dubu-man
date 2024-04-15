@@ -13,7 +13,6 @@ namespace dubu_man {
         __device__ hittable_list(hittable **list, size_t n) : m_list(list), m_list_size(n) {}
 
         __device__ ~hittable_list() override {
-            printf("~hittable_list(), ");
             for (size_t i = 0; i < m_list_size; ++i) {
                 delete m_list[i];
             }

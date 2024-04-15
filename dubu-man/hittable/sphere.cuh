@@ -12,14 +12,11 @@ namespace dubu_man {
         __device__ sphere() {}
 
         __device__ ~sphere() override {
-            printf("~sphere(), ");
             delete m_material;
         }
 
         __device__ sphere(point3 center, float radius, material *material) : m_center(center), m_radius(radius),
-                                                                             m_material(material) {
-            assert(m_radius >= 0);
-        }
+                                                                             m_material(material) {}
 
         __device__ bool hit(ray const &r, interval ray_t, hit_record &rec) const override {
             const auto oc = m_center - r.origin();
