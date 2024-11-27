@@ -5,6 +5,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <thrust/sort.h>
+#include "util/random.cuh"
 
 #ifdef USE_OIDN
 
@@ -20,6 +22,7 @@
 #include "linalg/vec3.cuh"
 #include "linalg/camera.cuh"
 #include "util/timer.cuh"
+#include "util/random.cuh"
 #include "hittable/hittable.cuh"
 #include "hittable/sphere.cuh"
 #include "hittable/hittable_list.cuh"
@@ -47,15 +50,15 @@ namespace dubu_man {
         return value < 0.0031308f ? 12.92f * value : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
     }
 
-    __device__ color ray_color(ray const &r, const camera *cam, hittable *world, curandState &rand_state) {
+    __device__ color ray_color(ray const &r, const camera *cam, hittable2 world, curandState &rand_state) {
         ray cur_ray = r;
         color cur_attenuation = color{1};
 
         for (size_t b = 0; b <= cam->max_bounces; ++b) {
             hit_record rec;
-            if (world->hit(cur_ray, interval{0.001f, INFINITY}, rec)) {
+            if (world.hit(cur_ray, interval{0.001f, INFINITY}, rec)) {
                 color attenuation;
-                if (!rec.material->scatter(cur_ray, rec, attenuation, cur_ray, rand_state))
+                if (!rec.material.scatter(cur_ray, rec, attenuation, cur_ray, rand_state))
                     return color{0};
                 cur_attenuation = cur_attenuation * attenuation;
             } else {
@@ -69,10 +72,9 @@ namespace dubu_man {
     }
 
     __global__ void render(PixelData framebuffer[], size_t framebuffer_pitch,
-                           const camera *cam, hittable **world, curandState *rand_state) {
+                           const camera *cam, hittable2 *world, curandState *rand_state) {
         for (unsigned int py = blockIdx.y * blockDim.y + threadIdx.y;
              py < cam->image_height; py += blockDim.y * gridDim.y) {
-            auto *row = (PixelData *) ((char *) framebuffer + framebuffer_pitch * py);
             for (unsigned int px = blockIdx.x * blockDim.x + threadIdx.x;
                  px < cam->image_width; px += blockDim.x * gridDim.x) {
                 const auto pixel_index = py * cam->image_width + px;
@@ -88,9 +90,9 @@ namespace dubu_man {
                     col = col + ray_color(r, cam, *world, local_rand_state);
 
                     hit_record rec;
-                    if ((*world)->hit(r, interval{0.001f, INFINITY}, rec)) {
+                    if (world->hit(r, interval{0.001f, INFINITY}, rec)) {
                         normal = normal + rec.normal;
-                        albedo = albedo + rec.material->get_albedo(rec);
+                        albedo = albedo + rec.material.get_albedo(rec);
                     }
                 }
 
@@ -99,64 +101,67 @@ namespace dubu_man {
                 col.y = linear_to_srgb(col.y);
                 col.z = linear_to_srgb(col.z);
 
-                row[px].color = col;
-                row[px].albedo = albedo * cam->pixel_samples_scale;
-                row[px].normal = normalize(normal);
+                auto &pixel = ((PixelData *) ((char *) framebuffer + framebuffer_pitch * py))[px];
+                pixel.color = col;
+                pixel.albedo = albedo * cam->pixel_samples_scale;
+                pixel.normal = normalize(normal);
             }
         }
     }
 
-    __global__ void create_world_1(hittable **d_world) {
+    __global__ void create_world_1(hittable2 *d_world) {
         constexpr size_t N = 5;
-        auto **const list = new hittable *[N];
-        list[0] = new sphere({0, -100.5f, -1}, 100, new lambertian({0.8f, 0.8f, 0.0f}));
-        list[1] = new sphere({0, 0, -1.2f}, 0.5f, new lambertian({0.1f, 0.2f, 0.5f}));
-        list[2] = new sphere({-1, 0, -1}, 0.5f, new dielectric(1.5f));
-        list[3] = new sphere({-1, 0, -1}, 0.4f, new dielectric(1.0f / 1.5f));
-        list[4] = new sphere({1, 0, -1}, 0.5f, new metal({0.8f, 0.6f, 0.2f}, 1.0f));
-        *d_world = new hittable_list(list, N);
+        auto list = new hittable2[N]{};
+
+        list[0] = hittable2::make_sphere({0, -100.5f, -1}, 100, material2::make_lambertian({0.8f, 0.8f, 0.0f}));
+        list[1] = hittable2::make_sphere({0, 0, -1.2f}, 0.5f, material2::make_lambertian({0.1f, 0.2f, 0.5f}));
+        list[2] = hittable2::make_sphere({-1, 0, -1}, 0.5f, material2::make_dielectric(1.5f));
+        list[3] = hittable2::make_sphere({-1, 0, -1}, 0.4f, material2::make_dielectric(1.0f / 1.5f));
+        list[4] = hittable2::make_sphere({1, 0, -1}, 0.5f, material2::make_metal({0.8f, 0.6f, 0.2f}, 1.0f));
+
+        *d_world = hittable2::make_hittable_list(list, N);
     }
 
-    __global__ void create_world_2(hittable **d_world) {
-        curandState rand_state;
-        curand_init(1984, 0, 0, &rand_state);
-
+    __global__ void create_world_2(hittable2 *d_world) {
         constexpr int M = 11;
         constexpr int MM = (M * 2 + 1);
         constexpr int N = MM * MM + 4;
-        auto **const list = new hittable *[N];
+        auto *const list = new hittable2[N]{};
+
+        curandState rand_state;
+        curand_init(1984, 0, 0, &rand_state);
 
         for (int a = -M; a <= M; ++a) {
             for (int b = -M; b <= M; ++b) {
                 const auto i = (a + M) * MM + (b + M);
-                const auto choose_mat = curand_uniform(&rand_state);
-                const vec3 center{(float) a + 0.9f * curand_uniform(&rand_state), 0.2f,
-                                  (float) b + 0.9f * curand_uniform(&rand_state)};
+                const auto choose_mat = random01(rand_state);
+                const vec3 center{(float) a + 0.9f * random01(rand_state), 0.2f,
+                                  (float) b + 0.9f * random01(rand_state)};
 
                 if (choose_mat < 0.8f) {
-                    const auto albedo = color::random(rand_state) * color::random(rand_state);
-                    list[i] = new sphere(center, 0.2, new lambertian(albedo));
+                    const auto albedo =
+                            vec3{random01(rand_state), random01(rand_state), random01(rand_state)} * vec3{random01(rand_state), random01(rand_state), random01(rand_state)};
+                    list[i] = hittable2::make_sphere(center, 0.2, material2::make_lambertian(albedo));
                 } else if (choose_mat < 0.95f) {
-                    const auto albedo = color::random(0.5f, 1.0f, rand_state);
-                    const auto fuzz = curand_uniform(&rand_state) * 0.5f;
-                    list[i] = new sphere(center, 0.2, new metal(albedo, fuzz));
+                    const auto albedo = color(random_range(0.5f, 1.0f, rand_state), random_range(0.5f, 1.0f, rand_state),
+                                              random_range(0.5f, 1.0f, rand_state));
+                    const auto fuzz = random_range(0.0f, 0.5f, rand_state);
+                    list[i] = hittable2::make_sphere(center, 0.2, material2::make_metal(albedo, fuzz));
                 } else {
-                    list[i] = new sphere(center, 0.2, new dielectric(1.5f));
+                    list[i] = hittable2::make_sphere(center, 0.2, material2::make_dielectric(1.5f));
                 }
             }
         }
 
-        list[MM * MM + 0] = new sphere({0, -1000, 0}, 1000.0f, new lambertian({0.5f, 0.5f, 0.5f}));
-        list[MM * MM + 1] = new sphere({0, 1, 0}, 1.0f, new dielectric(1.5f));
-        list[MM * MM + 2] = new sphere({-4, 1, 0}, 1.0f, new lambertian({0.4f, 0.2f, 0.1f}));
-        list[MM * MM + 3] = new sphere({4, 1, 0}, 1.0f, new metal({0.7f, 0.6f, 0.5f}, 0.0f));
+        list[MM * MM + 0] = hittable2::make_sphere({0, -1000, 0}, 1000.0f,
+                                                   material2::make_lambertian({0.5f, 0.5f, 0.5f}));
+        list[MM * MM + 1] = hittable2::make_sphere({0, 1, 0}, 1.0f, material2::make_dielectric(1.5f));
+        list[MM * MM + 2] = hittable2::make_sphere({-4, 1, 0}, 1.0f, material2::make_lambertian({0.4f, 0.2f, 0.1f}));
+        list[MM * MM + 3] = hittable2::make_sphere({4, 1, 0}, 1.0f, material2::make_metal({0.7f, 0.6f, 0.5f}, 0.0f));
 
-        *d_world = new hittable_list(list, N);
+        *d_world = hittable2::make_hittable_list(list, N);
     }
 
-    __global__ void free_world(hittable **d_world) {
-        delete *d_world;
-    }
 
     void run() {
         int device_id;
@@ -164,35 +169,34 @@ namespace dubu_man {
         int sm_count;
         cudaCheck(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device_id));
 
-        // Create camera
-        hittable **d_world;
-        cudaCheck(cudaMalloc(&d_world, sizeof(hittable *)));
 
         std::cout << "Scenes:\n"
                      "1. three balls front\n"
                      "2. final render in-one-weekend" << std::endl;
-        int sceneId = 0;
+        int sceneId = 1;
         while (!(sceneId >= 1 && sceneId <= 2)) {
             std::cout << "Select scene: ";
             std::cin >> sceneId;
         }
 
         camera const *cam{};
+        hittable2 *d_world;
+        cudaCheck(cudaMalloc(&d_world, sizeof(hittable2)));
 
         switch (sceneId) {
             case 1:
             default:
-                cam = new camera{{.image_width = 1024,
-                                         .aspect_ratio=2.0f,
-                                         .samples_per_pixel=10,
-                                         .max_bounces=10,
+                cam = new camera{{.image_width = 600,
+                                         .aspect_ratio = 2.0f,
+                                         .samples_per_pixel = 1,
+                                         .max_bounces = 20,
                                  }};
                 create_world_1<<<1, 1>>>(d_world);
                 break;
             case 2:
                 cam = new camera{{.image_width = 600,
                                          .aspect_ratio = 2.0f,
-                                         .samples_per_pixel = 10,
+                                         .samples_per_pixel = 1,
                                          .max_bounces = 10,
 
                                          .vfov = 20,
@@ -352,7 +356,6 @@ namespace dubu_man {
 
         // Deallocate
         cudaCheck(cudaDeviceSynchronize());
-        free_world<<<1, 1>>>(d_world);
         cudaCheck(cudaGetLastError());
         cudaCheck(cudaFree(d_cam));
         cudaCheck(cudaFree(d_world));

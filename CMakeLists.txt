@@ -26,6 +26,8 @@ add_executable(dubu_man
         dubu-man/material/dielectric.cu
         dubu-man/material/lambertian.cu
         dubu-man/material/metal.cu
+        dubu-man/material/material.cu
+        dubu-man/util/random.cuh
 )
 
 set_target_properties(dubu_man PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

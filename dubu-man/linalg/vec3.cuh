@@ -120,6 +120,14 @@ static std::ostream &operator<<(std::ostream &out, vec3 const &v) {
     return out << std::format("({}, {}, {})", v.x, v.y, v.z);
 }
 
+template<>
+struct std::formatter<vec3> : std::formatter<std::string> {
+    auto format(vec3 v, format_context &ctx) const {
+        return formatter<string>::format(
+                std::format("({}, {}, {})", v.x, v.y, v.z), ctx);
+    }
+};
+
 inline __device__ vec3 vec3::random_in_unit_disk(curandState &rand_state) {
     vec3 p{};
     do {

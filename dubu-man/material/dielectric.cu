@@ -1,5 +1,7 @@
 #include "dielectric.cuh"
 
+#include "../hittable/hit_record.cuh"
+
 namespace dubu_man {
     __device__ float dielectric::reflectance(const float cosine, const float ior) {
         auto r0 = (1 - ior) / (1 + ior);

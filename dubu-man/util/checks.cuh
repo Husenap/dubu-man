@@ -13,7 +13,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line) {
     }
 }
 
-#define cuCheck(ans) { cuAssert((ans), __FILE__, __LINE__); }
+#define cuCheck(ans) cuAssert((ans), __FILE__, __LINE__)
 
 inline void cuAssert(CUresult code, const char *file, int line) {
     if (code != CUDA_SUCCESS) {

@@ -15,7 +15,8 @@ namespace dubu_man {
             delete m_material;
         }
 
-        __device__ sphere(point3 center, float radius, material *material) : m_center(center), m_radius(radius),
+        __device__ sphere(point3 center, float radius, material *material) : m_center(center),
+                                                                             m_radius(radius),
                                                                              m_material(material) {}
 
         __device__ bool hit(ray const &r, interval ray_t, hit_record &rec) const override {
@@ -41,8 +42,7 @@ namespace dubu_man {
             rec.p = r.at(rec.t);
             const auto outward_normal = (rec.p - m_center) / m_radius;
             rec.set_face_normal(r, outward_normal);
-            rec.material = m_material;
-
+            //rec.material = (material2*)(void*)m_material;
             return true;
         }
     };

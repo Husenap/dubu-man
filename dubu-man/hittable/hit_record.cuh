@@ -2,14 +2,13 @@
 
 #include "../linalg/vec3.cuh"
 #include "../linalg/ray.cuh"
+#include "../material/material.cuh"
 
-namespace dubu_man{
-    class material;
-
+namespace dubu_man {
     struct hit_record {
         point3 p;
         vec3 normal;
-        material *material{};
+        material2 material{};
         float t{};
         bool front_face{};
 

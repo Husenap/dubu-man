@@ -1,5 +1,7 @@
 #include "lambertian.cuh"
 
+#include "../hittable/hit_record.cuh"
+
 namespace dubu_man{
     __device__ bool lambertian::scatter(const ray &r_in, const hit_record &rec, color &attenuation, ray &scattered,
                                         curandState &rand_state) const {
