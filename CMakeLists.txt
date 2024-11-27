@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.28)
-project(dubu_man CUDA)
+project(dubu_man
+        LANGUAGES CXX C CUDA)
 
 set(CMAKE_CUDA_STANDARD 26)
 
+include("cmake/glfw.cmake")
+add_subdirectory("cmake/glad")
 
 add_executable(dubu_man
         dubu-man/main.cu
@@ -27,9 +30,12 @@ add_executable(dubu_man
         dubu-man/material/lambertian.cu
         dubu-man/material/metal.cu
         dubu-man/material/material.cu
+        dubu-man/renderer/kernels.cu
+        dubu-man/scenes/scenes.cu
         dubu-man/util/random.cuh
 )
-
+target_include_directories(dubu_man PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dubu-man/")
+target_link_libraries(dubu_man glfw glad)
 set_target_properties(dubu_man PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 if (USE_OIDN)
