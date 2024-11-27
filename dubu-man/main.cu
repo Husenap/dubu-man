@@ -9,6 +9,7 @@
 
 #ifdef USE_OIDN
 #include <OpenImageDenoise/oidn.hpp>
+#include <cuda_gl_interop.h>
 #endif
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -22,6 +23,55 @@
 #define SAVE_PNG_FILES 0
 
 namespace dubu_man {
+
+const char* vertex_shader_source = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec2 aTexCoord;
+
+out vec2 TexCoord;
+
+void main() {
+    gl_Position = vec4(aPos, 0.0, 1.0);
+    TexCoord = aTexCoord;
+}
+)";
+
+const char* fragment_shader_source = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoord;
+
+uniform sampler2D screenTexture;
+
+void main() {
+    FragColor = vec4(texture(screenTexture, TexCoord).rgb, 1.0);
+}
+)";
+
+// clang-format off
+constexpr float quadVertices[] = {
+  // positions     // texCoords
+  -1.0f,  -1.0f,    0.0f, 1.0f,
+  -1.0f, 1.0f,    0.0f, 0.0f,
+  1.0f, 1.0f,    1.0f, 0.0f,
+
+  -1.0f,  -1.0f,    0.0f, 1.0f,
+  1.0f, 1.0f,    1.0f, 0.0f,
+  1.0f,  -1.0f,    1.0f, 1.0f
+};
+// clang-format on
+
+__global__ void copyToSurface(cudaSurfaceObject_t surface, float3* src, int width, int height) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (x < width && y < height) {
+    int idx = y * width + x;
+    float3 rgb = src[idx];
+    surf2Dwrite(make_float4(rgb.x, rgb.y, rgb.z, 1.0f), surface, x * sizeof(float4), y);
+  }
+}
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {}
 
@@ -255,7 +305,108 @@ void run() {
     glfwSwapInterval(0);
   }
 
-  cudaSetDevice(0);
+  GLuint texture;
+  { // Create an OpenGL Texture
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(
+        GL_TEXTURE_2D, 0, GL_RGBA32F, static_cast<int>(IMAGE_WIDTH), static_cast<int>(IMAGE_HEIGHT), 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+
+  const auto         width  = IMAGE_WIDTH;
+  const auto         height = IMAGE_HEIGHT;
+  std::vector<float> testData(width * height * 4, 0.5f); // White
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_FLOAT, testData.data());
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  // Register the Texture with CUDA
+  cudaGraphicsResource* cudaResource;
+  cudaCheck(cudaGraphicsGLRegisterImage(&cudaResource, texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard));
+
+  {
+    // Map the Texture in CUDA
+    cudaCheck(cudaGraphicsMapResources(1, &cudaResource, nullptr));
+    cudaArray* cudaArray;
+    cudaCheck(cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource, 0, 0));
+
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = cudaArray;
+
+    cudaSurfaceObject_t surface;
+    cudaCreateSurfaceObject(&surface, &resDesc);
+
+    std::cout << "cudaArray: " << cudaArray << std::endl;
+
+    // Copy Data from CUDA Buffer to OpenGL Texture
+    /*
+    cudaMemcpy3DParms copyParams = {};
+    copyParams.srcPtr            = make_cudaPitchedPtr(color_buffer.getData(), IMAGE_WIDTH * sizeof(vec3), IMAGE_WIDTH, IMAGE_HEIGHT);
+    copyParams.dstArray          = cudaArray;
+    copyParams.extent            = make_cudaExtent(IMAGE_WIDTH, IMAGE_HEIGHT, 1);
+    copyParams.kind              = cudaMemcpyDeviceToDevice;
+    cudaMemcpy3D(&copyParams);
+    */
+    // cudaMemcpy(cudaArray, color_buffer.getData(), NUM_PIXELS * sizeof(vec3), cudaMemcpyDeviceToDevice);
+
+    dim3 threads(16, 16);
+    dim3 blocks((width + threads.x - 1) / threads.x, (height + threads.y - 1) / threads.y);
+    copyToSurface<<<blocks, threads>>>(surface, reinterpret_cast<float3*>(color_buffer.getData()), width, height);
+    cudaCheck(cudaGetLastError());
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Unmap the Texture
+    cudaCheck(cudaGraphicsUnmapResources(1, &cudaResource, nullptr));
+  }
+
+  GLuint quadVAO, quadVBO;
+  { // Create Triangles for Fullscreen Quad
+    glGenVertexArrays(1, &quadVAO);
+    glGenBuffers(1, &quadVBO);
+
+    glBindVertexArray(quadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
+  }
+
+  GLuint program;
+  { // Create particle shader
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertex_shader_source, nullptr);
+    glCompileShader(vertexShader);
+    int  success;
+    char infoLog[512];
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+      glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+      std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragment_shader_source, nullptr);
+    glCompileShader(fragmentShader);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+      glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+      std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+  }
 
   double time           = glfwGetTime();
   int    frame          = 0;
@@ -296,9 +447,18 @@ void run() {
     glClear(GL_COLOR_BUFFER_BIT);
 
     // draw framebuffer
+    glUseProgram(program);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(program, "screenTexture"), 0);
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glfwSwapBuffers(window);
   }
+
+  // Cleanup resources
+  cudaGraphicsUnregisterResource(cudaResource);
+  glDeleteTextures(1, &texture);
 
   { // Destroy GLFW
     glfwDestroyWindow(window);
