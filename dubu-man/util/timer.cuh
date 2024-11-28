@@ -15,7 +15,7 @@ namespace dubu_man {
             float elapsed_time =
                     static_cast<float>(std::chrono::duration_cast<std::chrono::microseconds>(stop - m_start).count()) /
                     1000.0f;
-            std::clog << std::format("{}: {}ms", m_label, elapsed_time) << std::endl;
+            // std::clog << std::format("{}: {}ms", m_label, elapsed_time) << std::endl;
         }
     };
 } // dubu_man
