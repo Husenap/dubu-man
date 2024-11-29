@@ -278,7 +278,7 @@ public:
       break;
     case 2:
       cam = camera{{
-          .image_width  = 720,
+          .image_width  = 600,
           .aspect_ratio = 2.0f,
           .max_bounces  = 10,
 
@@ -370,7 +370,7 @@ public:
       glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
       // Create window
-      const auto VIEWPORT_WIDTH  = 1920;
+      const auto VIEWPORT_WIDTH  = 1280;
       const auto VIEWPORT_HEIGHT = static_cast<int>(VIEWPORT_WIDTH * image_height / image_width);
       window                     = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "dubu-man", nullptr, nullptr);
       glfwSetKeyCallback(window, key_callback);

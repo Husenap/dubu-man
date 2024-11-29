@@ -71,7 +71,7 @@ render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hit
 
       pixel.color = pixel.color * previous_decay + col * current_decay;
       pixel.albedo = pixel.albedo * previous_decay + albedo * current_decay;
-      pixel.normal = normalize(normal);
+      pixel.normal = pixel.normal * previous_decay + normalize(normal) * current_decay;
     }
   }
 }
