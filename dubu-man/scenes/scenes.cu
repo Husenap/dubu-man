@@ -47,7 +47,7 @@ __global__ void create_world_2(hittable2* d_world) {
     }
   }
 
-  list[MM * MM + 0] = hittable2::make_sphere({0, -1000, 0}, 1000.0f, material2::make_lambertian({0.5f, 0.5f, 0.5f}));
+  list[MM * MM + 0] = hittable2::make_sphere({0, -1000.0f, 0}, 1000.0f, material2::make_lambertian({0.5f, 0.5f, 0.5f}));
   list[MM * MM + 1] = hittable2::make_sphere({0, 1, 0}, 1.0f, material2::make_dielectric(1.5f));
   list[MM * MM + 2] = hittable2::make_sphere({-4, 1, 0}, 1.0f, material2::make_lambertian({0.4f, 0.2f, 0.1f}));
   list[MM * MM + 3] = hittable2::make_sphere({4, 1, 0}, 1.0f, material2::make_metal({0.7f, 0.6f, 0.5f}, 0.0f));

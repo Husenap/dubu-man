@@ -21,6 +21,7 @@ __host__ __device__ float linear_to_srgb(float value);
 
 __device__ color ray_color(ray const& r, const camera* cam, hittable2 world, curandState& rand_state);
 
-__global__ void render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable2* world, curandState* rand_state);
+__global__ void
+render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable2* world, curandState* rand_state, int frame);
 
 } // namespace dubu_man

@@ -1,6 +1,5 @@
-#include "kernels.cuh"
-
 #include "hittable/hittable.cuh"
+#include "kernels.cuh"
 #include "linalg/camera.cuh"
 #include "linalg/vec3.cuh"
 #include "util/checks.cuh"
@@ -40,36 +39,38 @@ __device__ color ray_color(ray const& r, const camera* cam, hittable2 world, cur
   return color{0};
 }
 
-__global__ void render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable2* world, curandState* rand_state) {
+__global__ void
+render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable2* world, curandState* rand_state, int frame) {
   for (unsigned int py = blockIdx.y * blockDim.y + threadIdx.y; py < cam->image_height; py += blockDim.y * gridDim.y) {
     for (unsigned int px = blockIdx.x * blockDim.x + threadIdx.x; px < cam->image_width; px += blockDim.x * gridDim.x) {
       const auto pixel_index = py * cam->image_width + px;
 
-      auto local_rand_state = rand_state[pixel_index];
+      auto& local_rand_state = rand_state[pixel_index];
 
       color col{};
       color albedo{};
       color normal{};
 
-      for (size_t s = 0; s < cam->samples_per_pixel; ++s) {
-        const auto r = cam->get_ray(px, py, local_rand_state);
-        col          = col + ray_color(r, cam, *world, local_rand_state);
+      const auto r = cam->get_ray(px, py, local_rand_state);
+      col          = col + ray_color(r, cam, *world, local_rand_state);
 
-        hit_record rec;
-        if (world->hit(r, interval{0.001f, INFINITY}, rec)) {
-          normal = normal + rec.normal;
-          albedo = albedo + rec.material.get_albedo(rec);
-        }
+      hit_record rec;
+      if (world->hit(r, interval{0.001f, INFINITY}, rec)) {
+        normal = normal + rec.normal;
+        albedo = albedo + rec.material.get_albedo(rec);
       }
 
-      col   = col * cam->pixel_samples_scale;
       col.x = linear_to_srgb(col.x);
       col.y = linear_to_srgb(col.y);
       col.z = linear_to_srgb(col.z);
 
-      auto& pixel  = ((PixelData*)((char*)framebuffer + framebuffer_pitch * py))[px];
-      pixel.color  = col;
-      pixel.albedo = albedo * cam->pixel_samples_scale;
+      auto& pixel = ((PixelData*)((char*)framebuffer + framebuffer_pitch * py))[px];
+
+      const auto previous_decay = static_cast<float>(frame - 1) / static_cast<float>(frame);
+      const auto current_decay  = 1.0f / static_cast<float>(frame);
+
+      pixel.color = pixel.color * previous_decay + col * current_decay;
+      pixel.albedo = pixel.albedo * previous_decay + albedo * current_decay;
       pixel.normal = normalize(normal);
     }
   }

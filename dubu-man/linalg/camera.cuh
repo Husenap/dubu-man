@@ -19,7 +19,6 @@ public:
   struct camera_settings {
     size_t image_width{400};
     float  aspect_ratio{16.0f / 9.0f};
-    size_t samples_per_pixel{10};
     size_t max_bounces{10};
 
     float  vfov{90.0f};
@@ -30,11 +29,11 @@ public:
     float defocus_angle{};
     float focus_dist{10.0f};
   };
-  size_t image_width;
-  size_t image_height;
-  size_t samples_per_pixel;
-  float  pixel_samples_scale;
-  size_t max_bounces;
+
+  size_t          image_width{};
+  size_t          image_height{};
+  size_t          max_bounces{};
+  camera_settings settings{};
 
   camera() = default;
   __host__ __device__ explicit camera(const camera_settings& settings);

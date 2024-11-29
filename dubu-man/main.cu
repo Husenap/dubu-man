@@ -47,6 +47,8 @@ void main() {
 }
 )";
 
+constexpr float PI = 3.1415926535898f;
+
 // clang-format off
 constexpr float quadVertices[] = {
   // positions     // texCoords
@@ -92,17 +94,115 @@ __global__ void extractBuffers(const PixelData* framebuffer,
   normal_buffer[idx] = pixel.normal;
 }
 
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {}
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+    glfwSetWindowShouldClose(window, GLFW_TRUE);
+  }
+}
+
+class camera_controller {
+  vec3  pos               = {};
+  float pitch             = {};
+  float yaw               = -PI * 0.5f;
+  float movement_speed    = 1.0f;
+  float mouse_sensitivity = 0.002f;
+
+  vec3 get_look_direction() {
+    const float cp = std::cosf(pitch);
+    const float cy = std::cosf(yaw);
+    const float sp = std::sinf(pitch);
+    const float sy = std::sinf(yaw);
+    return normalize(vec3(cp * cy, sp, cp * sy));
+  }
+
+public:
+  struct settings {
+    float movement_speed    = 1.0f;
+    float mouse_sensitivity = 0.002f;
+  };
+  camera_controller() = default;
+  explicit camera_controller(const settings s, const camera::camera_settings cs)
+      : pos(cs.look_from), movement_speed(s.movement_speed), mouse_sensitivity(s.mouse_sensitivity) {
+    const auto d = normalize(cs.look_at - cs.look_from);
+    pitch        = std::asinf(d.y);
+    yaw          = std::atan2f(-d.x, d.z) + 0.5f * PI;
+  }
+
+  bool update(GLFWwindow* window, float dt) {
+    vec3 target_velocity = {};
+    { // Calculate Camera Movement
+      float speed_multiplier = 1.0f;
+      if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)) speed_multiplier = 10.0f;
+      if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL)) speed_multiplier = 0.1f;
+
+      const float speed = movement_speed * speed_multiplier;
+
+      const auto forward = get_look_direction();
+      const auto right   = normalize(cross(forward, vec3(0, 1, 0)));
+      const auto up      = normalize(cross(right, forward));
+
+      if (glfwGetKey(window, GLFW_KEY_W)) target_velocity += forward;
+      if (glfwGetKey(window, GLFW_KEY_S)) target_velocity -= forward;
+      if (glfwGetKey(window, GLFW_KEY_D)) target_velocity += right;
+      if (glfwGetKey(window, GLFW_KEY_A)) target_velocity -= right;
+      if (glfwGetKey(window, GLFW_KEY_E)) target_velocity += up;
+      if (glfwGetKey(window, GLFW_KEY_Q)) target_velocity -= up;
+
+      pos += target_velocity * speed * dt;
+    }
+
+    float delta_yaw   = {};
+    float delta_pitch = {};
+    { // Calculate Camera Rotation
+      double cursor_x, cursor_y;
+      glfwGetCursorPos(window, &cursor_x, &cursor_y);
+      static double previous_cursor_x     = cursor_x;
+      static double previous_cursor_y     = cursor_y;
+      static int    previous_mouse_active = GLFW_RELEASE;
+      int           current_mouse_active  = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+      if (current_mouse_active && !previous_mouse_active) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+      }
+      if (!current_mouse_active && previous_mouse_active) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+      }
+      if (current_mouse_active) {
+        delta_yaw   = static_cast<float>(cursor_x - previous_cursor_x);
+        delta_pitch = static_cast<float>(previous_cursor_y - cursor_y);
+
+        pitch = std::clamp(pitch + delta_pitch * mouse_sensitivity, -0.499f * PI, 0.499f * PI);
+        yaw += delta_yaw * mouse_sensitivity;
+        while (yaw < 0.0f) yaw += 2.0f * PI;
+        while (yaw > 2.0f * PI) yaw -= 2.0f * PI;
+      }
+      previous_mouse_active = current_mouse_active;
+      previous_cursor_x     = cursor_x;
+      previous_cursor_y     = cursor_y;
+    }
+
+    return length_squared(target_velocity) > FLT_EPSILON || delta_yaw * delta_yaw + delta_pitch * delta_pitch > FLT_EPSILON;
+  }
+
+  camera get_camera(camera::camera_settings settings) {
+    settings.look_from = pos;
+    settings.look_at   = pos + get_look_direction();
+
+    // std::cerr << "update camera: from: " << settings.look_from << ", to: " << settings.look_from << std::endl;
+
+    return camera{settings};
+  }
+};
 
 class app {
   // CUDA State
   int sm_count = {};
 
   // Scene State
-  int        scene_id = 2;
-  hittable2* d_world  = {};
-  camera     cam      = {};
-  camera*    d_cam    = {};
+  int               scene_id   = 2;
+  hittable2*        d_world    = {};
+  camera            cam        = {};
+  camera*           d_cam      = {};
+  camera_controller controller = {};
 
   // Framebuffer State
   size_t       framebuffer_pitch = {};
@@ -113,13 +213,14 @@ class app {
   size_t       num_pixels        = {};
 
   // OIDN State
-  oidn::DeviceRef oidn_device   = {};
-  oidn::BufferRef color_buffer  = {};
-  oidn::BufferRef albedo_buffer = {};
-  oidn::BufferRef normal_buffer = {};
-  oidn::FilterRef filter        = {};
-  oidn::FilterRef albedo_filter = {};
-  oidn::FilterRef normal_filter = {};
+  oidn::DeviceRef oidn_device    = {};
+  oidn::BufferRef color_buffer   = {};
+  oidn::BufferRef albedo_buffer  = {};
+  oidn::BufferRef normal_buffer  = {};
+  oidn::FilterRef filter         = {};
+  oidn::FilterRef albedo_filter  = {};
+  oidn::FilterRef normal_filter  = {};
+  bool            enable_denoise = true;
 
   // GLFW State
   GLFWwindow* window = {};
@@ -169,37 +270,37 @@ public:
     case 1:
     default:
       cam = camera{{
-          .image_width       = 600,
-          .aspect_ratio      = 2.0f,
-          .samples_per_pixel = 1,
-          .max_bounces       = 20,
+          .image_width  = 600,
+          .aspect_ratio = 2.0f,
+          .max_bounces  = 10,
       }};
       create_world_1<<<1, 1>>>(d_world);
       break;
     case 2:
       cam = camera{{
-          .image_width       = 600,
-          .aspect_ratio      = 2.0f,
-          .samples_per_pixel = 1,
-          .max_bounces       = 10,
+          .image_width  = 720,
+          .aspect_ratio = 2.0f,
+          .max_bounces  = 10,
 
           .vfov      = 20,
           .look_from = {13, 2, 3},
           .look_at   = {0, 0, 0},
           .vup       = {0, 1, 0},
 
-          .defocus_angle = 0.6f,
-          .focus_dist    = 10.0f,
-
+          .defocus_angle = 0.0f,
+          .focus_dist    = 1.0f,
       }};
       create_world_2<<<1, 1>>>(d_world);
       break;
     }
 
+    controller = camera_controller({}, cam.settings);
+
     cudaCheck(cudaMalloc(&d_cam, sizeof(camera)));
     cudaCheck(cudaMemcpy(d_cam, &cam, sizeof(camera), cudaMemcpyHostToDevice));
   }
 
+  // Initialize the render buffers
   void init_render_state() {
     image_width  = cam.image_width;
     image_height = cam.image_height;
@@ -223,6 +324,7 @@ public:
     }
   }
 
+  // Initialize the Open Image Denoise device, buffers and filters
   void init_oidn() {
     // OIDN (Open Image Denoise) Device
     oidn_device = oidn::newCUDADevice(-1, nullptr);
@@ -258,6 +360,7 @@ public:
     normal_filter.commit();
   }
 
+  // Initialize GLFW Window and GLAD
   void init_glfw() {
     {
       // Initialize GLFW
@@ -267,9 +370,9 @@ public:
       glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
       // Create window
-      const auto VIEWPORT_WIDTH  = 1280;
+      const auto VIEWPORT_WIDTH  = 1920;
       const auto VIEWPORT_HEIGHT = static_cast<int>(VIEWPORT_WIDTH * image_height / image_width);
-      window                     = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "CUDA Particles", nullptr, nullptr);
+      window                     = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "dubu-man", nullptr, nullptr);
       glfwSetKeyCallback(window, key_callback);
       glfwMakeContextCurrent(window);
 
@@ -284,6 +387,8 @@ public:
       glfwSwapInterval(0);
     }
   }
+
+  // Initialize OpenGL Texture, Buffers Shaders, and CUDAResource
   void init_opengl() {
     { // Create an OpenGL Texture
       glGenTextures(1, &texture);
@@ -348,19 +453,20 @@ public:
     }
   }
 
-  void render_frame() {
+  // Render a frame of the scene
+  void render_frame(int frame) {
     {   // Render
       { // Render scene to framebuffer, 1 spp
         const auto dim_block = dim3(16, 16, 1);
         timer      t("Render");
-        render<<<sm_count, dim_block>>>(d_framebuffer, framebuffer_pitch, d_cam, d_world, d_rand_state);
+        render<<<sm_count, dim_block>>>(d_framebuffer, framebuffer_pitch, d_cam, d_world, d_rand_state, frame);
         cudaCheck(cudaGetLastError());
         cudaCheck(cudaDeviceSynchronize());
       }
     }
 
     // Copy framebuffer to OIDN buffers
-    dim3 threads(16, 16);
+    dim3 threads(32, 32);
     dim3 blocks((image_width + threads.x - 1) / threads.x, (image_height + threads.y - 1) / threads.y);
     extractBuffers<<<blocks, threads>>>((PixelData*)d_framebuffer,
                                         framebuffer_pitch,
@@ -370,32 +476,34 @@ public:
                                         image_width,
                                         image_height);
     cudaCheck(cudaGetLastError());
-    cudaCheck(cudaDeviceSynchronize());
 
-    {
-      timer t("OIDN Albedo Pre-filter");
-      albedo_filter.execute();
-    }
-    {
-      timer t("OIDN Normal Pre-filter");
-      normal_filter.execute();
-    }
-    {
-      timer t("OIDN Denoising");
-      filter.execute();
-    }
-    oidn_device.sync();
-    const char* errorMessage;
-    if (oidn_device.getError(errorMessage) != oidn::Error::None) {
-      std::cerr << "Error: " << errorMessage << std::endl;
+    if (enable_denoise) {
+      {
+        timer t("OIDN Albedo Pre-filter");
+        albedo_filter.execute();
+      }
+      {
+        timer t("OIDN Normal Pre-filter");
+        normal_filter.execute();
+      }
+      {
+        timer t("OIDN Denoising");
+        filter.execute();
+      }
+      oidn_device.sync();
+      const char* errorMessage;
+      if (oidn_device.getError(errorMessage) != oidn::Error::None) {
+        std::cerr << "Error: " << errorMessage << std::endl;
+      }
     }
   }
 
   void run() {
+    double time            = glfwGetTime();
+    int    frame           = 0;
+    int    recursive_frame = 0;
+    double delta_time_acc  = 0.0;
 
-    double time           = glfwGetTime();
-    int    frame          = 0;
-    double delta_time_acc = 0.0;
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
 
@@ -413,57 +521,68 @@ public:
         frame = 0;
       }
 
-      const auto delta_time = std::min(frame_time, 0.02);
+      const auto delta_time = std::min(frame_time, 0.05);
 
-      { // Update frame
-        /*
-        cam = camera{{
-            .image_width       = 600,
-            .aspect_ratio      = 2.0f,
-            .samples_per_pixel = 1,
-            .max_bounces       = 20,
-            .look_from         = {std::cosf(static_cast<float>(time)), 1.0f, 1.0f},
-        }};
-        cudaCheck(cudaMemcpy(d_cam, &cam, sizeof(camera), cudaMemcpyHostToDevice));
-        */
-
-        render_frame();
-
-        {
-          // Map the Texture in CUDA
-          cudaCheck(cudaGraphicsMapResources(1, &cudaResource, nullptr));
-          cudaArray* cudaArray;
-          cudaCheck(cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource, 0, 0));
-
-          cudaResourceDesc resDesc = {};
-          resDesc.resType          = cudaResourceTypeArray;
-          resDesc.res.array.array  = cudaArray;
-
-          cudaSurfaceObject_t surface;
-          cudaCreateSurfaceObject(&surface, &resDesc);
-
-          // Copy Data from CUDA Buffer to OpenGL Texture
-          dim3 threads(16, 16);
-          dim3 blocks((image_width + threads.x - 1) / threads.x, (image_height + threads.y - 1) / threads.y);
-          copyToSurface<<<blocks, threads>>>(surface, reinterpret_cast<float3*>(color_buffer.getData()), image_width, image_height);
-          cudaCheck(cudaGetLastError());
-          cudaCheck(cudaDeviceSynchronize());
-
-          // Unmap the Texture
-          cudaDestroySurfaceObject(surface);
-          cudaCheck(cudaGraphicsUnmapResources(1, &cudaResource, nullptr));
+      { // Update Camera
+        if (controller.update(window, static_cast<float>(delta_time))) {
+          cam = controller.get_camera(cam.settings);
+          cudaCheck(cudaMemcpy(d_cam, &cam, sizeof(camera), cudaMemcpyHostToDevice));
+          recursive_frame = 0;
         }
       }
 
-      glClearColor(0.05f, 0.06f, 0.07f, 1.0f);
-      glClear(GL_COLOR_BUFFER_BIT);
+      {
+        static int previous_toggle = false;
+        int        current_toggle  = glfwGetKey(window, GLFW_KEY_TAB);
+        if (current_toggle && !previous_toggle) {
+          enable_denoise = !enable_denoise;
+        }
+        previous_toggle = current_toggle;
+      }
 
-      // draw framebuffer
-      glUseProgram(program);
-      glBindTexture(GL_TEXTURE_2D, texture);
-      glUniform1i(glGetUniformLocation(program, "screenTexture"), 0);
-      glBindVertexArray(quadVAO);
-      glDrawArrays(GL_TRIANGLES, 0, 6);
+      {
+        // Render new ray traced frame
+        render_frame(++recursive_frame);
+
+        // Map the Texture in CUDA
+        cudaCheck(cudaGraphicsMapResources(1, &cudaResource, nullptr));
+        cudaArray* cudaArray;
+        cudaCheck(cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource, 0, 0));
+
+        cudaResourceDesc resDesc = {};
+        resDesc.resType          = cudaResourceTypeArray;
+        resDesc.res.array.array  = cudaArray;
+
+        cudaSurfaceObject_t surface;
+        cudaCreateSurfaceObject(&surface, &resDesc);
+
+        cudaCheck(cudaGraphicsUnmapResources(1, &cudaResource, nullptr));
+        cudaCheck(cudaGraphicsMapResources(1, &cudaResource, nullptr));
+
+        // Copy Data from CUDA Buffer to OpenGL Texture
+        dim3 threads(32, 32);
+        dim3 blocks((image_width + threads.x - 1) / threads.x, (image_height + threads.y - 1) / threads.y);
+        copyToSurface<<<blocks, threads>>>(surface, reinterpret_cast<float3*>(color_buffer.getData()), image_width, image_height);
+        cudaCheck(cudaGetLastError());
+        cudaCheck(cudaDeviceSynchronize());
+
+        // Unmap the Texture
+        cudaDestroySurfaceObject(surface);
+        cudaCheck(cudaGraphicsUnmapResources(1, &cudaResource, nullptr));
+        cudaCheck(cudaDeviceSynchronize());
+      }
+
+      { // Render
+        glClearColor(0.05f, 0.06f, 0.07f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // draw framebuffer
+        glUseProgram(program);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glUniform1i(glGetUniformLocation(program, "screenTexture"), 0);
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+      }
 
       glfwSwapBuffers(window);
     }
