@@ -12,9 +12,6 @@
 #include <cuda_gl_interop.h>
 #endif
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-
-#include "../thirdparty/stb_image_write.h"
 #include "renderer/kernels.cuh"
 #include "scenes/scenes.cuh"
 #include "util/checks.cuh"
