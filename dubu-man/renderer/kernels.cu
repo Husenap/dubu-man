@@ -19,7 +19,7 @@ __host__ __device__ float linear_to_srgb(float value) {
   return value < 0.0031308f ? 12.92f * value : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
 }
 
-__device__ color ray_color(ray const& r, const camera* cam, hittable2 world, curandState& rand_state) {
+__device__ color ray_color(ray const& r, const camera* cam, hittable world, curandState& rand_state) {
   ray   cur_ray         = r;
   color cur_attenuation = color{1};
 
@@ -40,7 +40,7 @@ __device__ color ray_color(ray const& r, const camera* cam, hittable2 world, cur
 }
 
 __global__ void
-render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable2* world, curandState* rand_state, int frame) {
+render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hittable* world, curandState* rand_state, int frame) {
   for (unsigned int py = blockIdx.y * blockDim.y + threadIdx.y; py < cam->image_height; py += blockDim.y * gridDim.y) {
     for (unsigned int px = blockIdx.x * blockDim.x + threadIdx.x; px < cam->image_width; px += blockDim.x * gridDim.x) {
       const auto pixel_index = py * cam->image_width + px;
@@ -69,7 +69,7 @@ render(PixelData framebuffer[], size_t framebuffer_pitch, const camera* cam, hit
       const auto previous_decay = static_cast<float>(frame - 1) / static_cast<float>(frame);
       const auto current_decay  = 1.0f / static_cast<float>(frame);
 
-      pixel.color = pixel.color * previous_decay + col * current_decay;
+      pixel.color  = pixel.color * previous_decay + col * current_decay;
       pixel.albedo = pixel.albedo * previous_decay + albedo * current_decay;
       pixel.normal = pixel.normal * previous_decay + normalize(normal) * current_decay;
     }

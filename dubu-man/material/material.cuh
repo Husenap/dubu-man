@@ -5,17 +5,7 @@
 namespace dubu_man {
 struct hit_record;
 
-class material {
-public:
-  __device__ virtual ~material() {}
-
-  __device__ virtual bool
-  scatter(ray const& r_in, hit_record const& rec, color& attenuation, ray& scattered, curandState& rand_state) const = 0;
-
-  __device__ virtual color get_albedo(hit_record const& rec) const = 0;
-};
-
-struct material2 {
+struct material {
   enum class material_type {
     lambertian,
     metal,
@@ -36,11 +26,11 @@ struct material2 {
     } dielectric;
   };
 
-  static __host__ __device__ material2 make_lambertian(color const& albedo);
+  static __host__ __device__ material make_lambertian(color const& albedo);
 
-  static __host__ __device__ material2 make_metal(color const& albedo, float fuzz);
+  static __host__ __device__ material make_metal(color const& albedo, float fuzz);
 
-  static __host__ __device__ material2 make_dielectric(float ior);
+  static __host__ __device__ material make_dielectric(float ior);
 
   __device__ bool scatter(ray const& r_in, hit_record const& rec, color& attenuation, ray& scattered, curandState& rand_state) const;
 

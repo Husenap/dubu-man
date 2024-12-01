@@ -20,15 +20,7 @@ add_executable(dubu_man
         dubu-man/linalg/trig.cuh
         dubu-man/hittable/hittable.cuh
         dubu-man/hittable/hit_record.cuh
-        dubu-man/hittable/sphere.cuh
-        dubu-man/hittable/hittable_list.cuh
         dubu-man/material/material.cuh
-        dubu-man/material/lambertian.cuh
-        dubu-man/material/metal.cuh
-        dubu-man/material/dielectric.cuh
-        dubu-man/material/dielectric.cu
-        dubu-man/material/lambertian.cu
-        dubu-man/material/metal.cu
         dubu-man/material/material.cu
         dubu-man/renderer/kernels.cu
         dubu-man/scenes/scenes.cu

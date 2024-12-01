@@ -198,8 +198,8 @@ class app {
   int sm_count = {};
 
   // Scene State
-  int               scene_id   = 2;
-  hittable2*        d_world    = {};
+  int               scene_id   = 1;
+  hittable*         d_world    = {};
   camera            cam        = {};
   camera*           d_cam      = {};
   camera_controller controller = {};
@@ -264,7 +264,7 @@ public:
       std::cin >> scene_id;
     }
 
-    cudaCheck(cudaMalloc(&d_world, sizeof(hittable2)));
+    cudaCheck(cudaMalloc(&d_world, sizeof(hittable)));
 
     switch (scene_id) {
     case 1:
@@ -360,32 +360,29 @@ public:
     normal_filter.commit();
   }
 
-  // Initialize GLFW Window and GLAD
+  // Initialize GLFW and GLAD
   void init_glfw() {
-    {
-      // Initialize GLFW
-      glfwInit();
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-      glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-      // Create window
-      const auto VIEWPORT_WIDTH  = 1280;
-      const auto VIEWPORT_HEIGHT = static_cast<int>(VIEWPORT_WIDTH * image_height / image_width);
-      window                     = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "dubu-man", nullptr, nullptr);
-      glfwSetKeyCallback(window, key_callback);
-      glfwMakeContextCurrent(window);
+    // Create window
+    const auto VIEWPORT_WIDTH  = 1280;
+    const auto VIEWPORT_HEIGHT = static_cast<int>(VIEWPORT_WIDTH * image_height / image_width);
+    window                     = glfwCreateWindow(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "dubu-man", nullptr, nullptr);
+    glfwSetKeyCallback(window, key_callback);
+    glfwMakeContextCurrent(window);
 
-      // Initialize OpenGL
-      if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::cerr << "Failed to initialize GLAD" << std::endl;
-        exit(-1);
-      }
-      int width, height;
-      glfwGetFramebufferSize(window, &width, &height);
-      glViewport(0, 0, width, height);
-      glfwSwapInterval(0);
+    // Initialize OpenGL
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+      std::cerr << "Failed to initialize GLAD" << std::endl;
+      exit(-1);
     }
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    glViewport(0, 0, width, height);
+    glfwSwapInterval(0);
   }
 
   // Initialize OpenGL Texture, Buffers Shaders, and CUDAResource
